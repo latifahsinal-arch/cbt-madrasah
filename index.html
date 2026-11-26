@@ -6021,6 +6021,81 @@
         });
       });
 
+      document.querySelectorAll('[data-exam-ctrl]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const action = btn.getAttribute('data-exam-ctrl');
+          const jid = btn.getAttribute('data-jad-id');
+          const sid = btn.getAttribute('data-siswa-id');
+          const jad = state.jadwalUjian.find(j => j.id === jid);
+          const siswa = state.users.find(u => u.id === sid);
+          const recId = `rec_${jid}_${sid}`;
+          const existingRec = state.examRecords.find(r => r.id === recId || (r.jadwalId === jid && r.siswaId === sid)) || {
+            id: recId,
+            jadwalId: jid,
+            siswaId: sid,
+            status: 'belum_mulai',
+            skor: 0,
+            pelanggaran: 0,
+            answers: {}
+          };
+
+          const labels = {
+            hentikan: ['Kunci Akses Ujian', `Kunci ujian peserta "${siswa?.nama || 'Peserta'}" agar tidak dapat melanjutkan pengerjaan?`, 'danger', 'Ya, Kunci'],
+            selesaikan: ['Selesaikan Ujian Peserta', `Tandai ujian peserta "${siswa?.nama || 'Peserta'}" sebagai selesai dan hitung nilai akhirnya?`, 'success', 'Ya, Selesaikan'],
+            reset_login: ['Buka Kembali Akses Ujian', `Buka kunci ujian peserta "${siswa?.nama || 'Peserta'}" dan izinkan melanjutkan pengerjaan?`, 'save', 'Ya, Buka Kunci'],
+            reset_ujian: ['Reset Ujian Peserta', `Hapus rekaman jawaban, nilai, dan pelanggaran peserta "${siswa?.nama || 'Peserta'}" untuk mengulang dari awal?`, 'danger', 'Ya, Reset Ujian']
+          };
+          const [mTitle, mMsg, mVar, mBtn] = labels[action] || ['Konfirmasi Kontrol Ujian', 'Lanjutkan tindakan ini?', 'save', 'Ya, Lanjutkan'];
+
+          openConfirmModal(mTitle, mMsg, async () => {
+            if (action === 'hentikan') {
+              await dbSaveDoc('exam_records', recId, {
+                ...existingRec,
+                id: recId,
+                jadwalId: jid,
+                siswaId: sid,
+                status: 'terkunci'
+              }, 'examRecords');
+              showToast(`Ujian ${siswa?.nama || 'peserta'} berhasil dikunci.`, 'warning');
+            } else if (action === 'selesaikan') {
+              const skorAkhir = typeof existingRec.manualSkor === 'number'
+                ? existingRec.manualSkor
+                : calculateExamScore(jad, existingRec.answers || {});
+              await dbSaveDoc('exam_records', recId, {
+                ...existingRec,
+                id: recId,
+                jadwalId: jid,
+                siswaId: sid,
+                status: 'selesai',
+                skor: skorAkhir,
+                waktuSelesai: existingRec.waktuSelesai || new Date().toTimeString().slice(0, 5)
+              }, 'examRecords');
+              showToast(`Ujian ${siswa?.nama || 'peserta'} ditandai selesai (Nilai: ${skorAkhir}).`, 'success');
+            } else if (action === 'reset_login') {
+              await dbSaveDoc('exam_records', recId, {
+                ...existingRec,
+                id: recId,
+                jadwalId: jid,
+                siswaId: sid,
+                status: 'mengerjakan',
+                pelanggaran: 0
+              }, 'examRecords');
+              showToast(`Akses ujian ${siswa?.nama || 'peserta'} dibuka kembali.`, 'success');
+            } else if (action === 'reset_ujian') {
+              state.examRecords = state.examRecords.filter(r => !(r.id === recId || (r.jadwalId === jid && r.siswaId === sid)));
+              await dbDeleteDoc('exam_records', recId, 'examRecords');
+              if (state.activeExamSession?.jadwalId === jid && state.currentUser?.id === sid) {
+                state.activeExamSession = null;
+                state.currentQuestionIndex = 0;
+                saveSessionState();
+              }
+              showToast(`Data ujian ${siswa?.nama || 'peserta'} telah direset.`, 'success');
+            }
+            renderApp();
+          }, { variant: mVar, confirmText: mBtn });
+        });
+      });
+
       const handleUpdateNilai = async () => {
         loadPreviewSnapshot();
         const jad = state.jadwalUjian.find(j => j.id === state.selectedJadwalId) || state.jadwalUjian[0];
